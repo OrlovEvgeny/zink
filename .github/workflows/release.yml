@@ -1,0 +1,61 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.2
+
+      - name: Test
+        run: zig build test --summary all
+
+      - name: Build native
+        run: zig build -Doptimize=ReleaseFast
+
+      - name: Build thumb-freestanding
+        run: zig build -Dtarget=thumb-freestanding -Dcpu=cortex_m55 -Doptimize=ReleaseFast --prefix zig-out/thumb-freestanding
+
+      - name: Build riscv32-freestanding
+        run: zig build -Dtarget=riscv32-freestanding -Dcpu=generic_rv32+v -Doptimize=ReleaseFast --prefix zig-out/riscv32-freestanding
+
+      - name: Package artifacts
+        run: |
+          tar czf zink-native.tar.gz -C zig-out/lib .
+          tar czf zink-thumb-freestanding.tar.gz -C zig-out/thumb-freestanding/lib .
+          tar czf zink-riscv32-freestanding.tar.gz -C zig-out/riscv32-freestanding/lib .
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          PREV_TAG=$(git tag --sort=-v:refname | head -2 | tail -1)
+          if [ "$PREV_TAG" = "${{ github.ref_name }}" ] || [ -z "$PREV_TAG" ]; then
+            CHANGELOG=$(git log --oneline --no-decorate)
+          else
+            CHANGELOG=$(git log --oneline --no-decorate "${PREV_TAG}..HEAD")
+          fi
+          {
+            echo "body<<EOF"
+            echo "$CHANGELOG"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          body: ${{ steps.changelog.outputs.body }}
+          files: |
+            zink-native.tar.gz
+            zink-thumb-freestanding.tar.gz
+            zink-riscv32-freestanding.tar.gz
